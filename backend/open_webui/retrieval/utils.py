@@ -839,9 +839,13 @@ def get_embedding_function(
 
                 # Flatten results — raise if any batch failed
                 embeddings = []
-                for i, batch_embeddings in enumerate(batch_results):
-                    if batch_embeddings is None:
-                        raise Exception(f'Embedding generation failed for batch {i + 1}/{len(batches)}')
+                for batch_embeddings in batch_results:
+                    if not isinstance(batch_embeddings, list):
+                        raise ValueError(
+                            f"Embedding API returned {type(batch_embeddings).__name__!r} for a batch "
+                            "(expected a list of vectors). An API error or timeout likely occurred "
+                            "for one or more batches — check the log lines above for details."
+                        )
                     embeddings.extend(batch_embeddings)
 
                 log.debug(
