@@ -2680,6 +2680,12 @@ DOCLING_PARAMS = PersistentConfig(
     docling_params,
 )
 
+DOCLING_JSON_CHUNK_MODE = PersistentConfig(
+    "DOCLING_JSON_CHUNK_MODE",
+    "rag.DOCLING_JSON_CHUNK_MODE",
+    os.environ.get("DOCLING_JSON_CHUNK_MODE", "chunk"),
+)
+
 DOCLING_SERVE_TIMEOUT = PersistentConfig(
     "DOCLING_SERVE_TIMEOUT",
     "rag.docling_serve_timeout",

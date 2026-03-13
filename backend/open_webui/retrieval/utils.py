@@ -1,5 +1,6 @@
 import logging
 import os
+import json
 from typing import Awaitable, Optional, Union
 
 import requests
@@ -154,7 +155,13 @@ def query_doc(collection_name: str, query_embedding: list[float], k: int, user: 
         )
 
         if result:
-            log.info(f'query_doc:result {result.ids} {result.metadatas}')
+            try:
+                metas_str = json.dumps(result.metadatas, ensure_ascii=False)
+            except Exception:
+                metas_str = str(result.metadatas)
+            if len(metas_str) > 1000:
+                metas_str = metas_str[:1000] + "...(truncated)"
+            log.info(f"query_doc:result {result.ids} {metas_str}")
 
         return result
     except Exception as e:
