@@ -231,6 +231,28 @@ class FilesTable:
         with get_db_context(db) as db:
             return [FileModel.model_validate(file) for file in db.query(File).filter_by(user_id=user_id).all()]
 
+    def get_pending_files_by_knowledge_id(
+        self,
+        knowledge_id: str,
+        user_id: Optional[str] = None,
+        db: Optional[Session] = None,
+    ) -> list['FileModelResponse']:
+        """Return files that reference knowledge_id in their meta.data and are
+        still being processed (status pending or processing).  Used to surface
+        in-flight uploads after a page refresh, before the background task has
+        finished and linked the file to the knowledge base."""
+        with get_db_context(db) as db:
+            query = db.query(File).filter(
+                File.data['status'].as_string().in_(['pending', 'processing']),
+                File.meta['data']['knowledge_id'].as_string() == knowledge_id,
+            )
+            if user_id:
+                query = query.filter_by(user_id=user_id)
+            return [
+                FileModelResponse.model_validate(f, from_attributes=True)
+                for f in query.order_by(File.created_at.desc()).all()
+            ]
+
     def get_file_list(
         self,
         user_id: Optional[str] = None,
