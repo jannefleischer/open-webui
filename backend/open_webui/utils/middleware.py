@@ -365,6 +365,69 @@ def get_citation_source_from_tool_result(
             # Empty result fallback
             return []
 
+        elif isinstance(tool_result, dict) and isinstance(tool_result.get('results'), list):
+            # Generic handler for external RAG retriever responses.
+            # Expects: {"results": [{"payload": {"title": ..., "url": ..., "date": ...}}, ...],
+            #          "context": "<source id='1' ...>text...</source>..."}
+            # Each result becomes an individual citation with title + URL, and text from context XML.
+            import re
+            
+            # Parse context XML to extract text content per result index
+            context_xml = tool_result.get('context', '')
+            text_by_index = {}
+            if context_xml:
+                try:
+                    # Match: <source id="1" ...>TEXT</source>
+                    for match in re.finditer(r'<source[^>]*id="(\d+)"[^>]*>([\s\S]*?)</source>', context_xml):
+                        idx = int(match.group(1)) - 1  # Convert 1-based XML id to 0-based array index
+                        import html as _html
+                        text = _html.unescape(match.group(2)).strip()
+                        if text:
+                            text_by_index[idx] = text
+                except Exception as e:
+                    log.debug(f'Error parsing context XML: {e}')
+            
+            documents = []
+            metadata = []
+            for i, result in enumerate(tool_result['results']):
+                payload = result.get('payload', {})
+                title = payload.get('title') or result.get('id', '')
+                url = payload.get('url', '')
+                date = payload.get('date', '')
+                score = result.get('score')
+                # Use the URL as the citation id so it renders as a clickable link
+                source_id = url if url else title
+                
+                # Prefer text from context XML, fall back to chunk_text if present, else title
+                content = text_by_index.get(i, '')
+                if not content:
+                    content = payload.get('chunk_text', '')
+                if not content:
+                    content = title
+                
+                documents.append(content)
+                meta = {'source': source_id, 'name': title}
+                if url:
+                    meta['url'] = url
+                if date:
+                    meta['date'] = date
+                if score is not None:
+                    meta['score'] = score
+                metadata.append(meta)
+            if documents:
+                return [
+                    {
+                        'source': {
+                            'name': tool_name,
+                            'type': 'tool',
+                            'id': tool_id or tool_name,
+                        },
+                        'document': documents,
+                        'metadata': metadata,
+                    }
+                ]
+            return []
+
         else:
             # Fallback for other tools
             return [
@@ -1431,22 +1494,28 @@ async def chat_completion_tools_handler(
 
                     tool_name = f'{tool_id}/{tool_function_name}' if tool_id else f'{tool_function_name}'
 
-                    # Citation is enabled for this tool
-                    sources.append(
-                        {
-                            'source': {
-                                'name': (f'{tool_name}'),
-                            },
-                            'document': [str(tool_result)],
-                            'metadata': [
-                                {
-                                    'source': (f'{tool_name}'),
-                                    'parameters': tool_function_params,
-                                }
-                            ],
-                            'tool_result': True,
-                        }
-                    )
+                    # Try to extract structured citation sources (e.g. from RAG retrievers).
+                    # Falls back to a single raw-content source for unknown tool formats.
+                    try:
+                        citation_sources = get_citation_source_from_tool_result(
+                            tool_name=tool_function_name,
+                            tool_params=tool_function_params,
+                            tool_result=tool_result,
+                            tool_id=tool_id,
+                        )
+                        for src in citation_sources:
+                            src['tool_result'] = True
+                            sources.append(src)
+                    except Exception as e:
+                        log.debug(f'Error extracting citation from tool result: {e}')
+                        sources.append(
+                            {
+                                'source': {'name': tool_name},
+                                'document': [str(tool_result)],
+                                'metadata': [{'source': tool_name, 'parameters': tool_function_params}],
+                                'tool_result': True,
+                            }
+                        )
 
                     if tools[tool_function_name].get('metadata', {}).get('file_handler', False):
                         skip_files = True
@@ -1961,6 +2030,12 @@ async def chat_completion_files_handler(
         all_full_context = all(item.get('context') == 'full' for item in files)
 
         queries = []
+        # When the query-generation LLM returns an empty list, it signals that
+        # no targeted search is needed (e.g. summarise, translate, list all).
+        # In that case we fall back to full-context mode instead of using the
+        # raw user message as a similarity query (which always scores ~0).
+        llm_requested_full_context = False
+
         if not all_full_context:
             try:
                 queries_response = await generate_queries(
@@ -1988,6 +2063,9 @@ async def chat_completion_files_handler(
                     queries_response = {'queries': [queries_response]}
 
                 queries = queries_response.get('queries', [])
+                if len(queries) == 0:
+                    # LLM explicitly decided no search is needed → use full context
+                    llm_requested_full_context = True
             except Exception:
                 pass
 
@@ -2002,7 +2080,9 @@ async def chat_completion_files_handler(
                 }
             )
 
-        if len(queries) == 0:
+        # Only fall back to the raw user message when the LLM did NOT explicitly
+        # return an empty list (i.e. when query generation itself failed/errored).
+        if len(queries) == 0 and not llm_requested_full_context:
             queries = [get_last_user_message(body['messages'])]
 
         try:
@@ -2024,7 +2104,7 @@ async def chat_completion_files_handler(
                 r=request.app.state.config.RELEVANCE_THRESHOLD,
                 hybrid_bm25_weight=request.app.state.config.HYBRID_BM25_WEIGHT,
                 hybrid_search=request.app.state.config.ENABLE_RAG_HYBRID_SEARCH,
-                full_context=all_full_context or request.app.state.config.RAG_FULL_CONTEXT,
+                full_context=all_full_context or llm_requested_full_context or request.app.state.config.RAG_FULL_CONTEXT,
                 user=user,
             )
         except Exception as e:
@@ -4276,18 +4356,7 @@ async def streaming_chat_response_handler(response, ctx):
                         )
 
                         # Extract citation sources from tool results
-                        if (
-                            citations_enabled
-                            and tool_function_name
-                            in [
-                                'search_web',
-                                'fetch_url',
-                                'view_file',
-                                'view_knowledge_file',
-                                'query_knowledge_files',
-                            ]
-                            and tool_result
-                        ):
+                        if citations_enabled and tool_result:
                             try:
                                 citation_sources = get_citation_source_from_tool_result(
                                     tool_name=tool_function_name,
