@@ -410,10 +410,9 @@ def get_builtin_tools(
         model_knowledge = list(model_knowledge or []) + list(folder_knowledge)
     if is_builtin_tool_enabled('knowledge'):
         if model_knowledge:
-            # Model has attached knowledge - provide discovery, search and semantic tools
+            # Model has attached knowledge - provide discovery, view and search tools
+            # view tools before search tools so LLM sees direct-read option first
             builtin_functions.append(list_knowledge)
-            builtin_functions.append(search_knowledge_files)
-            builtin_functions.append(query_knowledge_files)
 
             knowledge_types = {item.get('type') for item in model_knowledge}
             if 'file' in knowledge_types or 'collection' in knowledge_types:
@@ -421,6 +420,9 @@ def get_builtin_tools(
                 builtin_functions.append(view_knowledge_file)
             if 'note' in knowledge_types:
                 builtin_functions.append(view_note)
+
+            builtin_functions.append(search_knowledge_files)
+            builtin_functions.append(query_knowledge_files)
         else:
             # No model knowledge - allow full KB browsing
             builtin_functions.extend(

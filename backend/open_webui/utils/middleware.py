@@ -2542,6 +2542,21 @@ async def process_chat_payload(request, form_data, user, metadata, model):
 
     tool_ids = form_data.pop('tool_ids', None)
     terminal_id = form_data.pop('terminal_id', None)
+
+    # In native FC mode, intercept KB collections before they reach chat_completion_files_handler.
+    # Move them into metadata['folder_knowledge'] so builtin tools (list_knowledge,
+    # view_knowledge_file) handle them instead of the auto-RAG pipeline.
+    # At this point metadata == extra_params['__metadata__'] (same dict object),
+    # so changes here are visible to get_builtin_tools() later.
+    if metadata.get('params', {}).get('function_calling') == 'native':
+        raw_files = form_data.get('files') or []
+        kb_collections = [f for f in raw_files if f.get('type') == 'collection']
+        if kb_collections:
+            non_collection_files = [f for f in raw_files if f.get('type') != 'collection']
+            form_data['files'] = non_collection_files
+            existing_fk = list(metadata.get('folder_knowledge') or [])
+            metadata['folder_knowledge'] = existing_fk + kb_collections
+
     files = form_data.pop('files', None)
 
     # Caller-provided OpenAI-style tools take precedence over server-side
