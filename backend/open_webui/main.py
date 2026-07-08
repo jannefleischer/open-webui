@@ -214,6 +214,366 @@ from open_webui.utils.auth import (
     get_license_data,
     get_verified_user,
 )
+from open_webui.utils.chat import (
+    chat_completed as chat_completed_handler,
+)
+from open_webui.utils.chat import (
+    generate_chat_completion as chat_completion_handler,
+)
+from open_webui.utils.embeddings import generate_embeddings
+from open_webui.utils.logger import start_logger
+from open_webui.utils.middleware import (
+    background_tasks_handler,
+    build_chat_response_context,
+    process_chat_payload,
+    process_chat_response,
+)
+from open_webui.utils.models import (
+    check_model_access,
+    get_all_base_models,
+    get_all_models,
+    get_filtered_models,
+)
+from open_webui.utils.oauth import (
+    OAuthClientInformationFull,
+    OAuthClientManager,
+    OAuthManager,
+    apply_connection_oauth_options,
+    decrypt_data,
+    encrypt_data,
+    get_oauth_client_info_with_dynamic_client_registration,
+    get_oauth_client_info_with_static_credentials,
+    recover_static_oauth_client_metadata,
+    resolve_oauth_client_info,
+)
+from open_webui.utils.plugin import install_tool_and_function_dependencies
+from open_webui.utils.redis import get_redis_client
+from open_webui.utils.security_headers import SecurityHeadersMiddleware
+from open_webui.utils.session_pool import get_session
+from open_webui.utils.tools import set_terminal_servers, set_tool_servers
+
+if SAFE_MODE:
+    print('SAFE MODE ENABLED')
+    # Functions.deactivate_all_functions() is awaited in lifespan below
+
+logging.basicConfig(stream=sys.stdout, level=GLOBAL_LOG_LEVEL)
+log = logging.getLogger(__name__)
+
+
+class SPAStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope):
+        try:
+            return await super().get_response(path, scope)
+        except (HTTPException, StarletteHTTPException) as ex:
+            if ex.status_code == 404:
+                if path.endswith('.js'):
+                    # Return 404 for javascript files
+                    raise ex
+                else:
+                    return await super().get_response('index.html', scope)
+            else:
+                raise ex
+
+
+class CORSStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        return response
+
+
+if LOG_FORMAT != 'json':
+    banner = rf"""
+ ██████╗ ██████╗ ███████╗███╗   ██╗    ██╗    ██╗███████╗██████╗ ██╗   ██╗██╗
+██╔═══██╗██╔══██╗██╔════╝████╗  ██║    ██║    ██║██╔════╝██╔══██╗██║   ██║██║
+██║   ██║██████╔╝█████╗  ██╔██╗ ██║    ██║ █╗ ██║█████╗  ██████╔╝██║   ██║██║
+██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║    ██║███╗██║██╔══╝  ██╔══██╗██║   ██║██║
+╚██████╔╝██║     ███████╗██║ ╚████║    ╚███╔███╔╝███████╗██████╔╝╚██████╔╝██║
+ ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝     ╚══╝╚══╝ ╚══════╝╚═════╝  ╚═════╝ ╚═╝
+
+
+v{VERSION} - building the best AI user interface.
+{f'Commit: {WEBUI_BUILD_HASH}' if WEBUI_BUILD_HASH != 'dev-build' else ''}
+https://github.com/open-webui/open-webui
+"""
+    try:
+        print(banner)
+    except UnicodeEncodeError:
+        # Stdout can't encode the box-drawing banner (Windows cp1252, redirected/headless stdout); fall back to ASCII.
+        print(f'Open WebUI v{VERSION} - building the best AI user interface.\nhttps://github.com/open-webui/open-webui')
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Store reference to main event loop for sync->async calls (e.g., embedding generation)
+    # This allows sync functions to schedule work on the main loop without blocking health checks
+    app.state.main_loop = asyncio.get_running_loop()
+
+    app.state.instance_id = INSTANCE_ID
+    start_logger()
+
+    if RESET_CONFIG_ON_START:
+        await async_reset_config()
+
+    await import_legacy_config_json()
+    await seed_registered_defaults()
+    await initialize_runtime_config(app)
+    await migrate_legacy_webhook_config()
+    await publish_event(app, EVENTS.SYSTEM_STARTUP_STARTED, source='system')
+
+    if LICENSE_KEY:
+        get_license_data(app, LICENSE_KEY)
+
+    # Create admin account from env vars if specified and no users exist
+    if WEBUI_ADMIN_EMAIL and WEBUI_ADMIN_PASSWORD:
+        if await create_admin_user(WEBUI_ADMIN_EMAIL, WEBUI_ADMIN_PASSWORD, WEBUI_ADMIN_NAME):
+            # Disable signup since we now have an admin
+            await Config.upsert({'ui.enable_signup': False})
+
+    if SAFE_MODE:
+        await Functions.deactivate_all_functions()
+
+    # This should be blocking (sync) so functions are not deactivated on first /get_models calls
+    # when the first user lands on the / route.
+    log.info('Installing external dependencies of functions and tools...')
+    await install_tool_and_function_dependencies()
+
+    app.state.redis = get_redis_client(async_mode=True)
+
+    if app.state.redis is not None:
+        app.state.redis_task_command_listener = asyncio.create_task(redis_task_command_listener(app))
+
+    if THREAD_POOL_SIZE and THREAD_POOL_SIZE > 0:
+        limiter = anyio.to_thread.current_default_thread_limiter()
+        limiter.total_tokens = THREAD_POOL_SIZE
+
+    asyncio.create_task(periodic_usage_pool_cleanup())
+    asyncio.create_task(periodic_session_pool_cleanup())
+
+    from open_webui.utils.automations import scheduler_worker_loop
+
+    asyncio.create_task(scheduler_worker_loop(app))
+
+    if await Config.get('models.base_models_cache'):
+        try:
+            await get_all_models(
+                Request(
+                    # Creating a mock request object to pass to get_all_models
+                    {
+                        'type': 'http',
+                        'asgi.version': '3.0',
+                        'asgi.spec_version': '2.0',
+                        'method': 'GET',
+                        'path': '/internal',
+                        'query_string': b'',
+                        'headers': Headers({}).raw,
+                        'client': ('127.0.0.1', 12345),
+                        'server': ('127.0.0.1', 80),
+                        'scheme': 'http',
+                        'app': app,
+                    }
+                ),
+                None,
+            )
+        except Exception as e:
+            log.warning(f'Failed to pre-fetch models at startup: {e}')
+
+    # Pre-fetch tool server specs so the first request doesn't pay the latency cost
+    if len(await Config.get('tool_server.connections', []) or []) > 0:
+        mock_request = Request(
+            {
+                'type': 'http',
+                'asgi.version': '3.0',
+                'asgi.spec_version': '2.0',
+                'method': 'GET',
+                'path': '/internal',
+                'query_string': b'',
+                'headers': Headers({}).raw,
+                'client': ('127.0.0.1', 12345),
+                'server': ('127.0.0.1', 80),
+                'scheme': 'http',
+                'app': app,
+            }
+        )
+
+        log.info('Initializing tool servers...')
+        try:
+            await set_tool_servers(mock_request)
+            log.info(f'Initialized {len(app.state.TOOL_SERVERS)} tool server(s)')
+        except Exception as e:
+            log.warning(f'Failed to initialize tool servers at startup: {e}')
+
+        try:
+            await set_terminal_servers(mock_request)
+            log.info(f'Initialized {len(app.state.TERMINAL_SERVERS)} terminal server(s)')
+        except Exception as e:
+            log.warning(f'Failed to initialize terminal servers at startup: {e}')
+
+    # Mark application as ready to accept traffic from a startup perspective.
+    app.state.startup_complete = True
+    await publish_event(app, EVENTS.SYSTEM_STARTUP_COMPLETED, source='system')
+
+    yield
+
+    await publish_event(app, EVENTS.SYSTEM_SHUTDOWN_STARTED, source='system')
+
+    # Shutdown: clean up shared resources
+    from open_webui.utils.session_pool import close_session
+
+    await close_session()
+
+    if hasattr(app.state, 'redis_task_command_listener'):
+        app.state.redis_task_command_listener.cancel()
+
+    await publish_event(app, EVENTS.SYSTEM_SHUTDOWN_COMPLETED, source='system')
+
+
+app = FastAPI(
+    title='Open WebUI',
+    docs_url='/docs' if ENV == 'dev' else None,
+    openapi_url='/openapi.json' if ENV == 'dev' else None,
+    redoc_url=None,
+    lifespan=lifespan,
+)
+
+# Used by readiness checks to gate traffic until startup work is done.
+app.state.startup_complete = False
+
+# For Open WebUI OIDC/OAuth2
+oauth_manager = OAuthManager(app)
+app.state.oauth_manager = oauth_manager
+
+# For Integrations
+oauth_client_manager = OAuthClientManager(app)
+app.state.oauth_client_manager = oauth_client_manager
+
+app.state.instance_id = None
+app.state.redis = None
+
+app.state.WEBUI_NAME = WEBUI_NAME
+app.state.LICENSE_METADATA = None
+app.state.USER_COUNT = None
+app.state.EXTERNAL_PWA_MANIFEST_URL = EXTERNAL_PWA_MANIFEST_URL
+
+
+########################################
+#
+# OPENTELEMETRY
+#
+########################################
+
+if ENABLE_OTEL:
+    from open_webui.utils.telemetry.setup import setup as setup_opentelemetry
+
+    setup_opentelemetry(app=app, db_engine=engine)
+
+
+########################################
+#
+# OLLAMA
+#
+########################################
+
+
+app.state.OLLAMA_MODELS = {}
+
+########################################
+#
+# OPENAI
+#
+########################################
+
+
+app.state.OPENAI_MODELS = {}
+
+########################################
+#
+# TOOL SERVERS
+#
+########################################
+
+app.state.TOOL_SERVERS = []
+
+########################################
+#
+# TERMINAL SERVER
+#
+########################################
+
+app.state.TERMINAL_SERVERS = []
+
+########################################
+#
+# DIRECT CONNECTIONS
+#
+########################################
+
+
+########################################
+#
+# SCIM
+#
+########################################
+
+app.state.ENABLE_SCIM = ENABLE_SCIM
+app.state.SCIM_TOKEN = SCIM_TOKEN
+
+########################################
+#
+# MODELS
+#
+########################################
+
+app.state.BASE_MODELS = []
+
+########################################
+#
+# WEBUI
+#
+########################################
+
+
+async def initialize_runtime_config(app: FastAPI):
+    # Migrate legacy access_control → access_grants on boot.
+    from open_webui.utils.access_control import migrate_access_control
+
+    connections = await Config.get('tool_server.connections', []) or []
+    if any('access_control' in c.get('config', {}) for c in connections):
+        for connection in connections:
+            migrate_access_control(connection.get('config', {}))
+        await Config.upsert({'tool_server.connections': connections})
+
+    for tool_server_connection in connections:
+        if tool_server_connection.get('type', 'openapi') == 'mcp':
+            server_id = (tool_server_connection.get('info') or {}).get('id')
+            auth_type = tool_server_connection.get('auth_type', 'none')
+
+            if server_id and auth_type in ('oauth_2.1', 'oauth_2.1_static'):
+                try:
+                    oauth_client_info = resolve_oauth_client_info(tool_server_connection)
+                    oauth_client_info = await recover_static_oauth_client_metadata(
+                        tool_server_connection, oauth_client_info
+                    )
+                    oauth_client_info = apply_connection_oauth_options(tool_server_connection, oauth_client_info)
+                    app.state.oauth_client_manager.add_client(
+                        f'mcp:{server_id}',
+                        OAuthClientInformationFull(**oauth_client_info),
+                    )
+                except Exception as e:
+                    log.error(f'Error adding OAuth client for MCP tool server {server_id}: {e}')
+
+    arena_models = await Config.get('evaluation.arena.models', []) or []
+    if any('access_control' in m.get('meta', {}) for m in arena_models):
+        for model in arena_models:
+            migrate_access_control(model.get('meta', {}))
+        await Config.upsert({'evaluation.arena.models': arena_models})
+
+    app.state.EMBEDDING_FUNCTION = None
+    app.state.RERANKING_FUNCTION = None
+    app.state.ef = None
+    app.state.rf = None
+    app.state.YOUTUBE_LOADER_TRANSLATION = None
+
     try:
         rag_config = await Config.get_many(
             'rag.embedding_engine',

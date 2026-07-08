@@ -277,8 +277,10 @@ RETRIEVAL_CONFIG_KEYS = {
     'DATALAB_MARKER_USE_LLM': 'rag.datalab_marker_use_llm',
     'DDGS_BACKEND': 'web.search.ddgs_backend',
     'DOCLING_API_KEY': 'rag.docling_api_key',
+    'DOCLING_JSON_CHUNK_MODE': 'rag.DOCLING_JSON_CHUNK_MODE',
     'DOCLING_PARAMS': 'rag.docling_params',
     'DOCLING_SERVER_URL': 'rag.docling_server_url',
+    'DOCLING_SERVE_TIMEOUT': 'rag.docling_serve_timeout',
     'DOCUMENT_INTELLIGENCE_ENDPOINT': 'rag.document_intelligence_endpoint',
     'DOCUMENT_INTELLIGENCE_KEY': 'rag.document_intelligence_key',
     'DOCUMENT_INTELLIGENCE_MODEL': 'rag.document_intelligence_model',
@@ -646,6 +648,7 @@ async def get_rag_config(request: Request, user=Depends(get_admin_user)):
         'TIKA_SERVER_URL': config.TIKA_SERVER_URL,
         'DOCLING_SERVER_URL': config.DOCLING_SERVER_URL,
         'DOCLING_API_KEY': config.DOCLING_API_KEY,
+        'DOCLING_JSON_CHUNK_MODE': config.DOCLING_JSON_CHUNK_MODE,
         'DOCLING_PARAMS': config.DOCLING_PARAMS,
         'DOCLING_SERVE_TIMEOUT': config.DOCLING_SERVE_TIMEOUT,
         'DOCUMENT_INTELLIGENCE_ENDPOINT': config.DOCUMENT_INTELLIGENCE_ENDPOINT,
@@ -879,8 +882,9 @@ class ConfigForm(BaseModel):
     TIKA_SERVER_URL: str | None = None
     DOCLING_SERVER_URL: str | None = None
     DOCLING_API_KEY: str | None = None
+    DOCLING_JSON_CHUNK_MODE: str | None = None
     DOCLING_PARAMS: dict | None = None
-    DOCLING_SERVE_TIMEOUT: str | None = None
+    DOCLING_SERVE_TIMEOUT: int | None = None
     DOCUMENT_INTELLIGENCE_ENDPOINT: str | None = None
     DOCUMENT_INTELLIGENCE_KEY: str | None = None
     DOCUMENT_INTELLIGENCE_MODEL: str | None = None
@@ -1054,6 +1058,9 @@ async def update_rag_config(request: Request, form_data: ConfigForm, user=Depend
     )
     config.DOCLING_API_KEY = (
         form_data.DOCLING_API_KEY if form_data.DOCLING_API_KEY is not None else config.DOCLING_API_KEY
+    )
+    config.DOCLING_JSON_CHUNK_MODE = (
+        form_data.DOCLING_JSON_CHUNK_MODE if form_data.DOCLING_JSON_CHUNK_MODE is not None else config.DOCLING_JSON_CHUNK_MODE
     )
     config.DOCLING_PARAMS = form_data.DOCLING_PARAMS if form_data.DOCLING_PARAMS is not None else config.DOCLING_PARAMS
     config.DOCLING_SERVE_TIMEOUT = (
@@ -1352,6 +1359,7 @@ async def update_rag_config(request: Request, form_data: ConfigForm, user=Depend
         'TIKA_SERVER_URL': config.TIKA_SERVER_URL,
         'DOCLING_SERVER_URL': config.DOCLING_SERVER_URL,
         'DOCLING_API_KEY': config.DOCLING_API_KEY,
+        'DOCLING_JSON_CHUNK_MODE': config.DOCLING_JSON_CHUNK_MODE,
         'DOCLING_PARAMS': config.DOCLING_PARAMS,
         'DOCLING_SERVE_TIMEOUT': config.DOCLING_SERVE_TIMEOUT,
         'DOCUMENT_INTELLIGENCE_ENDPOINT': config.DOCUMENT_INTELLIGENCE_ENDPOINT,
@@ -1947,7 +1955,7 @@ async def process_file(
                         DOCLING_STATUS_CALLBACK=_docling_status_callback,
                         CHUNK_SIZE=config.CHUNK_SIZE,
                         CHUNK_OVERLAP=config.CHUNK_OVERLAP,
-                        DOCLING_JSON_CHUNK_MODE=getattr(config, 'DOCLING_JSON_CHUNK_MODE', None),
+                        DOCLING_JSON_CHUNK_MODE=config.DOCLING_JSON_CHUNK_MODE,
                         TEXT_SPLITTER=config.TEXT_SPLITTER,
                         TIKTOKEN_ENCODING_NAME=config.TIKTOKEN_ENCODING_NAME,
                         PDF_EXTRACT_IMAGES=config.PDF_EXTRACT_IMAGES,
