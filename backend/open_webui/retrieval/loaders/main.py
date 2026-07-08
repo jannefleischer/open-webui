@@ -1,10 +1,9 @@
 import asyncio
 import json
 import logging
+import re
 import sys
 import time
-import re
-from typing import Optional
 
 import ftfy
 import requests
@@ -197,7 +196,7 @@ class DoclingLoader:
             headers["X-Api-Key"] = f"{self.api_key}"
         return headers
 
-    def _submit_file(self) -> tuple[str, Optional[int]]:
+    def _submit_file(self) -> tuple[str, int | None]:
         headers = self._build_headers()
         page_break_marker = '\f'
         with open(self.file_path, "rb") as f:

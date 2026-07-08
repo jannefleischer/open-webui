@@ -2050,8 +2050,8 @@ async def process_file(
                         # Guard: check that the file record still exists before
                         # committing the final status.  The user may have pressed
                         # the delete button while docling/embedding was running.
-                        with get_db() as _guard_session:
-                            if Files.get_file_by_id(file.id, db=_guard_session) is None:
+                        async with get_async_db() as _guard_session:
+                            if await Files.get_file_by_id(file.id, db=_guard_session) is None:
                                 log.warning(
                                     "File %s was deleted during processing; "
                                     "discarding embeddings to prevent orphaned vectors.",

@@ -255,8 +255,8 @@ class FilesTable:
     async def get_pending_files_by_knowledge_id(
         self,
         knowledge_id: str,
-        user_id: Optional[str] = None,
-        db: Optional[AsyncSession] = None,
+        user_id: str | None = None,
+        db: AsyncSession | None = None,
     ) -> list['FileModelResponse']:
         """Return files that reference knowledge_id in their meta.data and are
         still being processed (status pending or processing).  Used to surface
@@ -393,7 +393,7 @@ class FilesTable:
             except Exception:
                 return None
 
-    async def reset_stuck_processing_files(self, db: Optional[AsyncSession] = None) -> int:
+    async def reset_stuck_processing_files(self, db: AsyncSession | None = None) -> int:
         """Mark all files whose status is 'pending' or 'processing' as 'failed'.
 
         Called once at application startup to clean up orphaned background
