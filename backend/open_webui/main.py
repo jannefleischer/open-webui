@@ -45,8 +45,6 @@ from open_webui.config import (
     CACHE_DIR,
     CORS_ALLOW_ORIGIN,
     DEFAULT_LOCALE,
-    DOCLING_JSON_CHUNK_MODE,
-    DOCLING_SERVE_TIMEOUT,
     ENABLE_ADMIN_ANALYTICS,
     # Admin
     ENABLE_ADMIN_CHAT_ACCESS,
@@ -133,6 +131,7 @@ from open_webui.models.access_grants import AccessGrants
 from open_webui.models.channels import Channels
 from open_webui.models.chats import ChatForm, Chats
 from open_webui.models.config import Config
+from open_webui.models.files import Files
 from open_webui.models.functions import Functions
 from open_webui.models.messages import Messages
 from open_webui.models.models import Models
@@ -319,6 +318,11 @@ async def lifespan(app: FastAPI):
     await seed_registered_defaults()
     await initialize_runtime_config(app)
     await migrate_legacy_webhook_config()
+
+    n_reset = await Files.reset_stuck_processing_files()
+    if n_reset:
+        log.info('Reset %d stuck file(s) to failed state', n_reset)
+
     await publish_event(app, EVENTS.SYSTEM_STARTUP_STARTED, source='system')
 
     if LICENSE_KEY:
