@@ -1931,47 +1931,16 @@ async def process_file(
                             _file_id_for_callback, data, db=db
                         )
 
-                    loader = Loader(
-                        engine=config.CONTENT_EXTRACTION_ENGINE,
-                        user=user,
-                        DATALAB_MARKER_API_KEY=config.DATALAB_MARKER_API_KEY,
-                        DATALAB_MARKER_API_BASE_URL=config.DATALAB_MARKER_API_BASE_URL,
-                        DATALAB_MARKER_ADDITIONAL_CONFIG=config.DATALAB_MARKER_ADDITIONAL_CONFIG,
-                        DATALAB_MARKER_SKIP_CACHE=config.DATALAB_MARKER_SKIP_CACHE,
-                        DATALAB_MARKER_FORCE_OCR=config.DATALAB_MARKER_FORCE_OCR,
-                        DATALAB_MARKER_PAGINATE=config.DATALAB_MARKER_PAGINATE,
-                        DATALAB_MARKER_STRIP_EXISTING_OCR=config.DATALAB_MARKER_STRIP_EXISTING_OCR,
-                        DATALAB_MARKER_DISABLE_IMAGE_EXTRACTION=config.DATALAB_MARKER_DISABLE_IMAGE_EXTRACTION,
-                        DATALAB_MARKER_FORMAT_LINES=config.DATALAB_MARKER_FORMAT_LINES,
-                        DATALAB_MARKER_USE_LLM=config.DATALAB_MARKER_USE_LLM,
-                        DATALAB_MARKER_OUTPUT_FORMAT=config.DATALAB_MARKER_OUTPUT_FORMAT,
-                        EXTERNAL_DOCUMENT_LOADER_URL=config.EXTERNAL_DOCUMENT_LOADER_URL,
-                        EXTERNAL_DOCUMENT_LOADER_API_KEY=config.EXTERNAL_DOCUMENT_LOADER_API_KEY,
-                        TIKA_SERVER_URL=config.TIKA_SERVER_URL,
-                        DOCLING_SERVER_URL=config.DOCLING_SERVER_URL,
-                        DOCLING_API_KEY=config.DOCLING_API_KEY,
-                        DOCLING_PARAMS=config.DOCLING_PARAMS,
-                        DOCLING_SERVE_TIMEOUT=config.DOCLING_SERVE_TIMEOUT,
-                        DOCLING_STATUS_CALLBACK=_docling_status_callback,
-                        CHUNK_SIZE=config.CHUNK_SIZE,
-                        CHUNK_OVERLAP=config.CHUNK_OVERLAP,
-                        DOCLING_JSON_CHUNK_MODE=config.DOCLING_JSON_CHUNK_MODE,
-                        TEXT_SPLITTER=config.TEXT_SPLITTER,
-                        TIKTOKEN_ENCODING_NAME=config.TIKTOKEN_ENCODING_NAME,
-                        PDF_EXTRACT_IMAGES=config.PDF_EXTRACT_IMAGES,
-                        PDF_LOADER_MODE=config.PDF_LOADER_MODE,
-                        DOCUMENT_INTELLIGENCE_ENDPOINT=config.DOCUMENT_INTELLIGENCE_ENDPOINT,
-                        DOCUMENT_INTELLIGENCE_KEY=config.DOCUMENT_INTELLIGENCE_KEY,
-                        DOCUMENT_INTELLIGENCE_MODEL=config.DOCUMENT_INTELLIGENCE_MODEL,
-                        MISTRAL_OCR_API_BASE_URL=config.MISTRAL_OCR_API_BASE_URL,
-                        MISTRAL_OCR_API_KEY=config.MISTRAL_OCR_API_KEY,
-                        MINERU_API_MODE=config.MINERU_API_MODE,
-                        MINERU_API_URL=config.MINERU_API_URL,
-                        MINERU_API_KEY=config.MINERU_API_KEY,
-                        MINERU_API_TIMEOUT=config.MINERU_API_TIMEOUT,
-                        MINERU_PARAMS=config.MINERU_PARAMS,
-                    )
-                    docs = loader.load(file.filename, file.meta.get('content_type'), file_path)
+                    loader_config = await get_loader_config()
+                    loader = build_loader_from_config(request, loader_config)
+                    loader.user = user
+                    loader.metadata = {
+                        'file_id': file.id,
+                        'file_name': file.filename,
+                        'file_content_type': file.meta.get('content_type'),
+                    }
+                    loader.kwargs['DOCLING_STATUS_CALLBACK'] = _docling_status_callback
+                    docs = await loader.aload(file.filename, file.meta.get('content_type'), file_path)
 
                     docs = [
                         Document(
