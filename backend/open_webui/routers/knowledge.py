@@ -29,7 +29,6 @@ from open_webui.models.knowledge import (
     Knowledges,
     KnowledgeUserResponse,
 )
-from open_webui.models.files import Files, FileMetadataResponse, FileModelResponse
 from open_webui.models.models import ModelForm, Models
 from open_webui.retrieval.vector.async_client import ASYNC_VECTOR_DB_CLIENT
 from open_webui.retrieval.external import retrieve_external_knowledge, retrieve_external_knowledge_for_connection
