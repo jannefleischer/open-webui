@@ -33,6 +33,7 @@
 	export let edit = false;
 
 	let enableFullContent = false;
+	let enableFocusedTools = false;
 	let loading = false;
 
 	let isPDF = false;
@@ -253,6 +254,8 @@
 		if (item?.context === 'full') {
 			enableFullContent = true;
 		}
+		// Defaults to false (all tools) unless explicitly focused on this attachment.
+		enableFocusedTools = item?.tool_scope === 'focused';
 	});
 </script>
 
@@ -347,7 +350,7 @@
 					</div>
 
 					{#if edit}
-						<div class=" self-end">
+						<div class="flex flex-col items-end gap-1 self-end">
 							<Tooltip
 								content={enableFullContent
 									? $i18n.t(
@@ -371,6 +374,32 @@
 									/>
 								</div>
 							</Tooltip>
+
+							{#if item?.type === 'collection'}
+								<Tooltip
+									content={enableFocusedTools
+										? $i18n.t(
+												'Only knowledge-related tools are offered to the model for this chat. Recommended for small/local models, which lose track of the right tool once many unrelated tools (memory, tasks, calendar, ...) are offered alongside knowledge tools.'
+											)
+										: $i18n.t(
+												'All enabled tool categories (memory, notes, tasks, calendar, ...) are offered to the model alongside knowledge tools.'
+											)}
+								>
+									<div class="flex items-center gap-1.5 text-xs">
+										{#if enableFocusedTools}
+											{$i18n.t('Using Focused Tool Set')}
+										{:else}
+											{$i18n.t('Using All Tools')}
+										{/if}
+										<Switch
+											bind:state={enableFocusedTools}
+											on:change={(e) => {
+												item.tool_scope = e.detail ? 'focused' : undefined;
+											}}
+										/>
+									</div>
+								</Tooltip>
+							{/if}
 						</div>
 					{/if}
 				</div>

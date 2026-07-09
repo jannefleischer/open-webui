@@ -2947,6 +2947,25 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                 ]
                 if inlet_filter_tools:
                     form_data['tools'].extend(inlet_filter_tools)
+
+                # When a knowledge collection is attached, hint the model to call
+                # list_knowledge first so it doesn't skip to unrelated tools.
+                folder_knowledge_hint = metadata.get('folder_knowledge')
+                if folder_knowledge_hint and 'list_knowledge' in tools_dict:
+                    kb_names = ', '.join(
+                        item.get('name', item.get('id', ''))
+                        for item in folder_knowledge_hint
+                        if isinstance(item, dict)
+                    )
+                    hint = (
+                        f'Knowledge base attached: {kb_names}. '
+                        'To answer questions about its contents, ALWAYS call the list_knowledge tool first '
+                        'to discover available files, then use query_knowledge_files or view_knowledge_file '
+                        'to retrieve the actual content.'
+                    )
+                    form_data['messages'] = add_or_update_system_message(
+                        hint, form_data['messages'], append=True
+                    )
             else:
                 # If the function calling is not native, then call the tools function calling handler
                 try:

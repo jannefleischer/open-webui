@@ -518,6 +518,17 @@ async def get_builtin_tools(
     folder_knowledge = extra_params.get('__metadata__', {}).get('folder_knowledge')
     if folder_knowledge:
         model_knowledge = list(model_knowledge or []) + list(folder_knowledge)
+
+    # All enabled builtin tool categories are exposed by default, even when a
+    # knowledge base is attached. Small local models can degrade at tool
+    # selection once too many builtin tools compete (they call list_memories
+    # instead of list_knowledge, or stop calling tools entirely), so each
+    # knowledge attachment offers an opt-in "Using Focused Tool Set" switch
+    # (item.tool_scope == 'focused') that suppresses the unrelated bulk
+    # categories below so the knowledge tools stand out.
+    knowledge_focus = bool(model_knowledge) and any(
+        isinstance(item, dict) and item.get('tool_scope') == 'focused' for item in model_knowledge
+    )
     if is_builtin_tool_enabled('knowledge'):
         from open_webui.env import ENABLE_KB_EXEC
 
@@ -558,12 +569,13 @@ async def get_builtin_tools(
             )
 
     # Chats tools - search and fetch user's chat history
-    if is_builtin_tool_enabled('chats'):
+    if is_builtin_tool_enabled('chats') and not knowledge_focus:
         builtin_functions.extend([search_chats, view_chat])
 
     # Add memory tools when memory is enabled and the model allows this builtin category.
     if (
-        is_builtin_tool_enabled('memory')
+        not knowledge_focus
+        and is_builtin_tool_enabled('memory')
         and features.get('memory')
         and get_model_capability('memory')
         and await has_user_permission('memories')
@@ -620,11 +632,21 @@ async def get_builtin_tools(
         builtin_functions.append(execute_code)
 
     # Notes tools - search, view, create, and update user's notes
-    if is_builtin_tool_enabled('notes') and config.get('notes.enable') and await has_user_permission('notes'):
+    if (
+        not knowledge_focus
+        and is_builtin_tool_enabled('notes')
+        and config.get('notes.enable')
+        and await has_user_permission('notes')
+    ):
         builtin_functions.extend([search_notes, view_note, write_note, replace_note_content])
 
     # Channels tools - search channels and messages
-    if is_builtin_tool_enabled('channels') and config.get('channels.enable') and await has_user_permission('channels'):
+    if (
+        not knowledge_focus
+        and is_builtin_tool_enabled('channels')
+        and config.get('channels.enable')
+        and await has_user_permission('channels')
+    ):
         builtin_functions.extend(
             [
                 search_channels,
@@ -639,12 +661,13 @@ async def get_builtin_tools(
         builtin_functions.append(view_skill)
 
     # Task management - break down complex work into trackable steps
-    if is_builtin_tool_enabled('tasks'):
+    if is_builtin_tool_enabled('tasks') and not knowledge_focus:
         builtin_functions.extend([create_tasks, update_task])
 
     # Automation tools - create and manage scheduled automations from chat
     if (
-        is_builtin_tool_enabled('automations')
+        not knowledge_focus
+        and is_builtin_tool_enabled('automations')
         and config.get('automations.enable')
         and await has_user_permission('automations')
     ):
@@ -653,7 +676,12 @@ async def get_builtin_tools(
         )
 
     # Calendar tools - search/create/update/delete events
-    if is_builtin_tool_enabled('calendar') and config.get('calendar.enable') and await has_user_permission('calendar'):
+    if (
+        not knowledge_focus
+        and is_builtin_tool_enabled('calendar')
+        and config.get('calendar.enable')
+        and await has_user_permission('calendar')
+    ):
         builtin_functions.extend(
             [search_calendar_events, create_calendar_event, update_calendar_event, delete_calendar_event]
         )

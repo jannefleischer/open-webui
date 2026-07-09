@@ -2357,23 +2357,18 @@ async def list_knowledge(
     __model_knowledge__: Optional[list[dict]] = None,
 ) -> str:
     """
-    IMPORTANT: Call this tool FIRST when working with attached knowledge.
-    This lists all available files, knowledge bases, and notes so you can make an informed decision
-    about the best retrieval strategy.
+    List all files, knowledge bases (document collections), and notes attached to this conversation.
+    Use this to discover what documents are available before searching or reading them.
+    This is the correct tool when the user asks to "list files", "show documents", or "what's in the knowledge base".
 
-    After listing, decide your next step based on what you see:
-    - If there are a small number of relevant files you can identify by name or KB → read them directly
-      using view_knowledge_file(file_id) with pagination. This preserves full content, tables, and formatting.
-    - If you need to search across many files to find relevant content → use query_knowledge_files(query)
-      for semantic/vector search. Note: vector search does not preserve table structure or handle
-      structured documents well.
+    IMPORTANT: Call this tool FIRST before searching or reading — listing first makes you smarter.
 
-    DO NOT skip this step and go straight to query_knowledge_files — listing first makes you smarter.
+    After listing, decide your next step:
+    - Few relevant files identifiable by name → read directly with view_knowledge_file(file_id)
+    - Many files / need to find relevant passages → use query_knowledge_files(query) for semantic search
 
-    Without knowledge_id: returns KB summaries (name, description, file_count)
-    plus standalone files and notes — no file listing inside KBs.
+    Without knowledge_id: returns KB summaries (name, description, file_count) plus standalone files and notes.
     With knowledge_id: includes paginated file listing for that specific KB.
-    Use skip/count to page through large KBs.
 
     :param knowledge_id: Optional KB ID to get file listing for
     :param skip: Number of files to skip for pagination (default: 0)
